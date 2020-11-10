@@ -165,7 +165,7 @@ class Connection
 
     /**
      * Insert a Middleware for the Guzzle Client.
-     *
+     *tokenHasExpired
      * @param $middleWare
      */
     public function insertMiddleWare($middleWare)
@@ -185,14 +185,49 @@ class Connection
             $this->redirectForAuthorization();
         }
 
-        // If access token is not set or token has expired, acquire new token
-        if (empty($this->accessToken) || $this->tokenHasExpired()) {
+        if (empty($this->accessToken)){
             $this->acquireAccessToken();
+        } elseif($this->tokenHasExpired()) {
+            $this->acquireAccessToken_by_refreshtoken();
         }
 
         $client = $this->client();
 
         return $client;
+    }
+
+    // Acquire AccessToken by RefreshToken
+    private function acquireAccessToken_by_refreshtoken()
+    {
+        $headers = array("Content-Type: application/x-www-form-urlencoded", "Cache-Control: no-cache");
+        $params = array(
+            'refresh_token' => $this->refreshToken,
+            'grant_type' => 'refresh_token',
+            'client_id'     => $this->exactClientId,
+            'client_secret' => $this->exactClientSecret,
+        );
+
+        $curl = curl_init();
+        $url = $this->getTokenUrl();
+        curl_setopt($curl, CURLOPT_URL,$url);
+        curl_setopt($curl, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($curl, CURLOPT_POST, true);
+        curl_setopt($curl, CURLOPT_POSTFIELDS,http_build_query($params));
+        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+        $output = curl_exec ($curl);
+
+        $res = json_decode($output, true);
+        if(!$res['error'] && $res['refresh_token']){
+            $this->accessToken = $res['access_token'];
+            $this->refreshToken = $res['refresh_token'];
+            $this->tokenExpires = $this->getTimestampFromExpiresIn($res['expires_in']);
+
+            if (is_callable($this->tokenUpdateCallback)) {
+                call_user_func($this->tokenUpdateCallback, $this);
+            }
+        } else {
+            throw new ApiException('Could not acquire tokens, json decode failed. Got response: ' . $res["error"] .', '. $res["error_description"]);
+        }
     }
 
     /**
